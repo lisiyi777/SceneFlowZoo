@@ -25,6 +25,7 @@ from .feed_forward.fast_flow_3d import (
     FastFlow3DBucketedLoaderLoss,
     FastFlow3DSelfSupervisedLoss,
 )
+from .feed_forward.flow4d import Flow4D
 from .whole_batch_optimization import (
     NSFPForwardOnlyOptimizationLoop,
     NSFPCycleConsistencyOptimizationLoop,
@@ -55,6 +56,7 @@ from .mini_batch_optimization import (
 importable_models = [
     DeFlow,
     FastFlow3D,
+    Flow4D,
     ConstantVectorBaseline,
     NSFPForwardOnlyOptimizationLoop,
     NSFPCycleConsistencyOptimizationLoop,

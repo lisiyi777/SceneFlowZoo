@@ -4,7 +4,7 @@ from .scatter import PointPillarsScatter
 
 from .embedder_model import HardEmbedder, DynamicEmbedder
 from .dynamic_scatter_wrapper import DynamicScatterWrapper
-
+from .embedder_model_flow4D import DynamicEmbedder_4D
 __all__ = [
     "HardEmbedder",
     "DynamicEmbedder",
@@ -14,4 +14,5 @@ __all__ = [
     "PointPillarsScatter",
     "DynamicVoxelizer",
     "DynamicPillarFeatureNet",
+    "DynamicEmbedder_4D",
 ]
