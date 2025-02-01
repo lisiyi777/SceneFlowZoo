@@ -40,13 +40,8 @@ class DeFlowLoss(FastFlow3DBaseLoss):
         total_loss = 0.
 
         for input_item, output_item in zip(input_batch, model_res):
-            gt = input_item.get_global_pc(-1)
-            pred = input_item.get_full_global_pc(-2) + output_item.get_full_ego_flow(0)
-
-            mask_no_nan = (~gt.isnan() & ~pred.isnan() & ~gt.isinf() & ~pred.isinf())
-
-            pred = pred[mask_no_nan].reshape(-1, 3)
-            gt = gt[mask_no_nan].reshape(-1, 3)
+            gt = input_item.get_global_pc_gt_flowed(-1)
+            pred = output_item.get_full_ego_flow(0)
 
             speed = gt.norm(dim=1, p=2) / 0.1
 
@@ -89,8 +84,8 @@ class Flow4D(BaseTorchModel):
     ) -> None:
         super().__init__()
 
-        point_output_ch = 16
-        voxel_output_ch = 16
+        point_output_ch = 4
+        voxel_output_ch = 4
 
         self.SEQUENCE_LENGTH = SEQUENCE_LENGTH
         self.embedder_4D = DynamicEmbedder_4D(voxel_size=VOXEL_SIZE,
@@ -121,13 +116,9 @@ class Flow4D(BaseTorchModel):
         batched_sequence: List[TorchFullFrameInputSequence],
         logger: Logger,
     ) -> List[TorchFullFrameOutputSequence]:
-        
         batch_dict = self._convert_to_input_dict(batched_sequence)
-
         model_res = self._model_forward(batch_dict)
-
         output_sequences = self._convert_output_dict(model_res, batched_sequence)
-
         return output_sequences
 
     def _convert_output_dict(
@@ -135,7 +126,8 @@ class Flow4D(BaseTorchModel):
         model_res: dict,
         batched_sequence: List[TorchFullFrameInputSequence],
     ) -> List[TorchFullFrameOutputSequence]:
-        num_items = len(next(iter(model_res.values())))
+
+        batch_size = len(next(iter(model_res.values())))
         return [
             TorchFullFrameOutputSequence(
                 ego_flows=self._convert_to_full_flow(
@@ -143,8 +135,9 @@ class Flow4D(BaseTorchModel):
                 ).unsqueeze(0),
                 valid_flow_mask=batched_sequence[i].get_full_pc_mask(-2).unsqueeze(0),
             )
-            for i in range(num_items)
+            for i in range(batch_size)
         ]
+        # TODO: check the coordinate (should be ego for pc0?) and if the mask is the desired one
 
     def _convert_to_full_flow(self, valid_flows: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
         full_size = valid_mask.shape[0]
@@ -156,8 +149,8 @@ class Flow4D(BaseTorchModel):
         self,
         batched_sequence: List[TorchFullFrameInputSequence],
     ) -> dict:
-        def pad_with_nan(pc_before_pad):
-            return torch.nn.utils.rnn.pad_sequence(pc_before_pad, batch_first=True, padding_value=torch.nan)
+        def pad_with_nan(pc):
+            return torch.nn.utils.rnn.pad_sequence(pc, batch_first=True, padding_value=torch.nan)
         return {
             "pc0": pad_with_nan([seq.get_ego_pc(-2) for seq in batched_sequence]),
             "pc1": pad_with_nan([seq.get_ego_pc(-1) for seq in batched_sequence]),
@@ -181,6 +174,7 @@ class Flow4D(BaseTorchModel):
         output: the predicted flow, pose_flow, and the valid point index of pc0
         model_res = {
             "flow": [flow1, flow2, flow3],
+            'pose_flow': pose flows, 
             "pc0_valid_point_idxes": [mask1, mask2, mask3],
         }
         """
@@ -261,7 +255,6 @@ class Flow4D(BaseTorchModel):
         model_res = {
             "flow": flows, 
             'pose_flow': pose_flows, 
-
             "pc0_valid_point_idxes": pc0_valid_point_idxes, 
             "pc0_points_lst": pc0_points_lst, 
             

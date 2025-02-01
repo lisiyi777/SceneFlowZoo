@@ -50,8 +50,8 @@ def main():
     )
 
     print("Train dataloader length:", len(train_dataloader))
-    print("Val dataloader length:", len(val_dataloader))
-
+    print("Val dataloader length:", len(val_dataloader))        
+        
     model = setup_model(cfg, evaluator, args.resume_from_checkpoint)
 
     epoch_checkpoint_callback = ModelCheckpoint(

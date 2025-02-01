@@ -17,5 +17,5 @@ test_dataset = dict(
 )
 
 # Limit batch size to 8 to fit on 24GB RTX3090
-test_dataloader = dict(args=dict(batch_size=2, num_workers=0, shuffle=False, pin_memory=True))
+test_dataloader = dict(args=dict(batch_size=1, num_workers=0, shuffle=False, pin_memory=True))
 validate_every = None

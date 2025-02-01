@@ -13,7 +13,7 @@ model = dict(
         VOXEL_SIZE={{_base_.VOXEL_SIZE}},
         PSEUDO_IMAGE_DIMS={{_base_.PSEUDO_IMAGE_DIMS}},
         POINT_CLOUD_RANGE={{_base_.POINT_CLOUD_RANGE}},
-        FEATURE_CHANNELS=32,
+        FEATURE_CHANNELS=8,
         SEQUENCE_LENGTH=SEQUENCE_LENGTH,
     ),
 )
@@ -60,4 +60,4 @@ train_dataset = dict(
     ),
 )
 
-train_dataloader = dict(args=dict(batch_size=16, num_workers=16, shuffle=True, pin_memory=False))
+train_dataloader = dict(args=dict(batch_size=1, num_workers=16, shuffle=True, pin_memory=False))
