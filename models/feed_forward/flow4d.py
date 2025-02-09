@@ -40,7 +40,8 @@ class DeFlowLoss(FastFlow3DBaseLoss):
         total_loss = 0.
 
         for input_item, output_item in zip(input_batch, model_res):
-            gt = input_item.get_global_pc_gt_flowed(-1)
+            source_idx = len(input_item) - 2
+            gt = input_item.get_full_ego_pc_gt_flowed(source_idx) - input_item.get_full_ego_pc(source_idx)
             pred = output_item.get_full_ego_flow(0)
 
             speed = gt.norm(dim=1, p=2) / 0.1
@@ -75,17 +76,18 @@ class DeFlowLoss(FastFlow3DBaseLoss):
 class Flow4D(BaseTorchModel):
     def __init__(
         self,
-        VOXEL_SIZE=[0.2, 0.2, 6],
+        VOXEL_SIZE=[0.2, 0.2, 0.2],
         PSEUDO_IMAGE_DIMS=[512, 512],
         POINT_CLOUD_RANGE=[-51.2, -51.2, -3, 51.2, 51.2, 3],
         FEATURE_CHANNELS=32,
         SEQUENCE_LENGTH=5,
         loss_fn: FastFlow3DBaseLoss = DeFlowLoss(),
+        # loss_fn: FastFlow3DBaseLoss = FastFlow3DBucketedLoaderLoss(),
     ) -> None:
         super().__init__()
 
-        point_output_ch = 4
-        voxel_output_ch = 4
+        point_output_ch = 16
+        voxel_output_ch = 16
 
         self.SEQUENCE_LENGTH = SEQUENCE_LENGTH
         self.embedder_4D = DynamicEmbedder_4D(voxel_size=VOXEL_SIZE,
@@ -121,61 +123,68 @@ class Flow4D(BaseTorchModel):
         output_sequences = self._convert_output_dict(model_res, batched_sequence)
         return output_sequences
 
-    def _convert_output_dict(
-        self,
-        model_res: dict,
-        batched_sequence: List[TorchFullFrameInputSequence],
-    ) -> List[TorchFullFrameOutputSequence]:
-
-        batch_size = len(next(iter(model_res.values())))
-        return [
-            TorchFullFrameOutputSequence(
-                ego_flows=self._convert_to_full_flow(
-                    model_res["flow"][i], batched_sequence[i].get_full_pc_mask(-2)
-                ).unsqueeze(0),
-                valid_flow_mask=batched_sequence[i].get_full_pc_mask(-2).unsqueeze(0),
-            )
-            for i in range(batch_size)
-        ]
-        # TODO: check the coordinate (should be ego for pc0?) and if the mask is the desired one
-
-    def _convert_to_full_flow(self, valid_flows: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
-        full_size = valid_mask.shape[0]
-        full_flows = torch.full((full_size, 3), float('nan'), device=valid_flows.device)
-        full_flows[valid_mask] = valid_flows
-        return full_flows
-
     def _convert_to_input_dict(
         self,
         batched_sequence: List[TorchFullFrameInputSequence],
     ) -> dict:
         def pad_with_nan(pc):
+            # pad to the longest valid sequence length
             return torch.nn.utils.rnn.pad_sequence(pc, batch_first=True, padding_value=torch.nan)
         return {
+            # TODO: pc in ego frame?
             "pc0": pad_with_nan([seq.get_ego_pc(-2) for seq in batched_sequence]),
             "pc1": pad_with_nan([seq.get_ego_pc(-1) for seq in batched_sequence]),
-            "pose0": [seq.pc_poses_sensor_to_ego[-2] for seq in batched_sequence],
-            "pose1": [seq.pc_poses_sensor_to_ego[-1] for seq in batched_sequence],
+            "pose0": [seq.pc_poses_ego_to_global[-2] for seq in batched_sequence],
+            "pose1": [seq.pc_poses_ego_to_global[-1] for seq in batched_sequence],
             **{
                 f"pc_m{i}": pad_with_nan([seq.get_ego_pc(-(i + 2)) for seq in batched_sequence])
                 for i in range(1, self.SEQUENCE_LENGTH - 1)
             },
             **{
-                f"pose_m{i}": [seq.pc_poses_sensor_to_ego[-(i + 2)] for seq in batched_sequence]
+                f"pose_m{i}": [seq.pc_poses_ego_to_global[-(i + 2)] for seq in batched_sequence]
                 for i in range(1, self.SEQUENCE_LENGTH - 1)
             },
         }
+
+    def _convert_output_dict(
+        self,
+        model_res: dict,
+        batched_sequence: List[TorchFullFrameInputSequence],
+    ) -> List[TorchFullFrameOutputSequence]:
+        # model_res['flows'] = motion flow, add to ego flow to get the final flow
+        batch_size = len(next(iter(model_res.values())))
+        pose_flows = model_res['pose_flow']
+        batch_output = []
+
+        for batch_id in range(batch_size):
+            valid_from_pc2res = model_res['pc0_valid_point_idxes'][batch_id]
+            pose_flow = pose_flows[batch_id][valid_from_pc2res]
+            final_flow_ = pose_flow.clone() + model_res['flow'][batch_id]
+            ego_full_flows = self._convert_to_full_flow(final_flow_, batched_sequence[batch_id].get_full_pc_mask(-2))
+            batch_output.append(
+                TorchFullFrameOutputSequence(
+                ego_flows=ego_full_flows.unsqueeze(0),
+                valid_flow_mask=batched_sequence[batch_id].get_full_pc_mask(-2).unsqueeze(0),
+                )
+            )
+
+        return batch_output
+
+    def _convert_to_full_flow(self, valid_flows: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
+        full_flows = torch.zeros((valid_mask.shape[0], 3), device=valid_flows.device)
+        full_flows[valid_mask] = valid_flows
+        return full_flows
+    
 
     def _model_forward(self, batch) -> dict:
         """
         input: using the batch from dataloader, which is a dict
                Detail: [pc0, pc1, pose0, pose1]
                pose0: a list (len=batch size)
-        output: the predicted flow, pose_flow, and the valid point index of pc0
+        output: 
         model_res = {
-            "flow": [flow1, flow2, flow3],
+            "flow": pose,
             'pose_flow': pose flows, 
-            "pc0_valid_point_idxes": [mask1, mask2, mask3],
         }
         """
 
@@ -191,10 +200,7 @@ class Flow4D(BaseTorchModel):
             selected_pc0 = batch["pc0"][batch_id] 
             self.timer[0][0].start("pose")
             with torch.no_grad():
-                if 'ego_motion' in batch:
-                    pose_0to1 = batch['ego_motion'][batch_id] 
-                else:
-                    pose_0to1 = cal_pose0to1(batch["pose0"][batch_id], batch["pose1"][batch_id]) 
+                pose_0to1 = cal_pose0to1(batch["pose0"][batch_id], batch["pose1"][batch_id]) 
 
                 if self.SEQUENCE_LENGTH > 2: 
                     past_poses = []
@@ -206,7 +212,7 @@ class Flow4D(BaseTorchModel):
             self.timer[0][1].start("transform")
             transform_pc0 = selected_pc0 @ pose_0to1[:3, :3].T + pose_0to1[:3, 3] #t -> t+1 warping
             self.timer[0][1].stop()
-            pose_flows.append(transform_pc0 - selected_pc0)
+            pose_flows.append(transform_pc0 - selected_pc0) #?
             transform_pc0s.append(transform_pc0)
 
             for i in range(1, self.SEQUENCE_LENGTH - 1):
@@ -215,11 +221,9 @@ class Flow4D(BaseTorchModel):
                 transform_pc_m_frames[i-1].append(transform_pc_m)
 
         pc_m_frames = [torch.stack(transform_pc_m_frames[i], dim=0) for i in range(self.SEQUENCE_LENGTH - 2)]
-
         pc0s = torch.stack(transform_pc0s, dim=0) 
         pc1s = batch["pc1"]
         self.timer[0].stop()
-
 
         pcs_dict = {
             'pc0s': pc0s,
@@ -230,14 +234,15 @@ class Flow4D(BaseTorchModel):
 
         self.timer[1].start("4D_voxelization")
         dict_4d = self.embedder_4D(pcs_dict)
-        pc01_tesnor_4d = dict_4d['4d_tensor']
+        pc01_tesnor_4d = dict_4d['4d_tensor']   # SparseConvTensor [23614,8]
         pc0_3dvoxel_infos_lst =dict_4d['pc0_3dvoxel_infos_lst']
-        pc0_point_feats_lst =dict_4d['pc0_point_feats_lst']
+        pc0_point_feats_lst =dict_4d['pc0_point_feats_lst'] #?
         pc0_num_voxels = dict_4d['pc0_mum_voxels']
         self.timer[1].stop()
 
         self.timer[2].start("4D_backbone")
         pc_all_output_4d = self.network_4D(pc01_tesnor_4d) #all = past, current, next 다 합친것
+        # SparseConvTensor [23614,8]. spatial shape [512,512,16,5]
         self.timer[2].stop()
 
         self.timer[3].start("4D pc01 to 3D pc0")

@@ -62,7 +62,6 @@ class DynamicEmbedder(nn.Module):
                                            output_shape=pseudo_image_dims)
 
     def forward(self, points: torch.Tensor) -> torch.Tensor:
-
         # List of points and coordinates for each batch
         voxel_info_list = self.voxelizer(points)
 
@@ -107,7 +106,7 @@ class DynamicEmbedder_4D(nn.Module):
 
         for time_index, frame_key in enumerate(frame_keys):
             pc = input_dict[frame_key]
-            voxel_info_list = self.voxelizer(pc)
+            voxel_info_list = self.voxelizer(pc, frame_key)
 
             voxel_feats_list_batch = []
             voxel_coors_list_batch = []
@@ -116,10 +115,8 @@ class DynamicEmbedder_4D(nn.Module):
                 points = voxel_info_dict['points']
                 coordinates = voxel_info_dict['voxel_coords']
                 voxel_feats, voxel_coors, point_feats = self.feature_net(points, coordinates)
-
                 if frame_key == 'pc0s':
                     pc0_point_feats_lst.append(point_feats)
-                    
                 batch_indices = torch.full((voxel_coors.size(0), 1), batch_index, dtype=torch.long, device=voxel_coors.device)
                 voxel_coors_batch = torch.cat([batch_indices, voxel_coors[:, [2, 1, 0]]], dim=1)
 

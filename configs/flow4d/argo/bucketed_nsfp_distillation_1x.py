@@ -1,19 +1,21 @@
-_base_ = ["../../pseudoimage.py"]
+POINT_CLOUD_RANGE = (-51.2, -51.2, -2.2, 51.2, 51.2, 4.2)
+VOXEL_SIZE = (0.2, 0.2, 0.4)
+PSEUDO_IMAGE_DIMS = (512, 512)
 
 epochs = 50
-learning_rate = 2e-6
+learning_rate = 1e-3
 save_every = 500
 validate_every = 500
 
 SEQUENCE_LENGTH = 5
-
+gradient_clip_val = 5.0
 model = dict(
     name="Flow4D",
     args=dict(
-        VOXEL_SIZE={{_base_.VOXEL_SIZE}},
-        PSEUDO_IMAGE_DIMS={{_base_.PSEUDO_IMAGE_DIMS}},
-        POINT_CLOUD_RANGE={{_base_.POINT_CLOUD_RANGE}},
-        FEATURE_CHANNELS=8,
+        VOXEL_SIZE=VOXEL_SIZE,
+        PSEUDO_IMAGE_DIMS=PSEUDO_IMAGE_DIMS,
+        POINT_CLOUD_RANGE=POINT_CLOUD_RANGE,
+        FEATURE_CHANNELS=32,
         SEQUENCE_LENGTH=SEQUENCE_LENGTH,
     ),
 )
@@ -41,8 +43,7 @@ test_dataloader = dict(args=dict(batch_size=8, num_workers=8, shuffle=False, pin
 
 ######## TRAIN DATASET ########
 
-# train_sequence_dir = "/efs/argoverse2/train/"
-train_sequence_dir = "/efs/argoverse2/val/"
+train_sequence_dir = "/efs/argoverse2/train/"
 
 train_dataset = dict(
     name="TorchFullFrameDataset",
@@ -60,4 +61,4 @@ train_dataset = dict(
     ),
 )
 
-train_dataloader = dict(args=dict(batch_size=1, num_workers=16, shuffle=True, pin_memory=False))
+train_dataloader = dict(args=dict(batch_size=8, num_workers=16, shuffle=True, pin_memory=False))

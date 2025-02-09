@@ -55,7 +55,8 @@ class DynamicVoxelizer(nn.Module):
 
     def forward(
             self,
-            points: List[torch.Tensor]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+            points: List[torch.Tensor], 
+            frame_key=None) -> List[Tuple[torch.Tensor, torch.Tensor]]:
 
         batch_results = []
         for batch_idx in range(len(points)):
@@ -65,10 +66,14 @@ class DynamicVoxelizer(nn.Module):
             not_nan_mask = ~torch.isnan(batch_points).any(dim=1)
             batch_non_nan_points = batch_points[not_nan_mask]
             valid_point_idxes = valid_point_idxes[not_nan_mask]
+            if frame_key == 'pc0s':
+                # If this is the current frame, keep all points to match the evaluation vliad points mask
+                point_cloud_range = torch.tensor(self.point_cloud_range, dtype=batch_non_nan_points.dtype, device=batch_non_nan_points.device)
+                batch_non_nan_points = torch.clamp(batch_non_nan_points, min=point_cloud_range[:3]+1e-5, max=point_cloud_range[3:]-1e-5)
+
             batch_voxel_coords = self.voxelizer(batch_non_nan_points)
             # If any of the coords are -1, then the point is not in the voxel grid and should be discarded
             batch_voxel_coords_mask = (batch_voxel_coords != -1).all(dim=1)
-
             valid_batch_voxel_coords = batch_voxel_coords[
                 batch_voxel_coords_mask]
             valid_batch_non_nan_points = batch_non_nan_points[
