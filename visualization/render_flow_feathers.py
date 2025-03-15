@@ -78,13 +78,12 @@ def render_flows(
 
     results: list[SceneFlowData] = []
 
-    # Use torch inference mode
     model.model = model.model.eval()
     with torch.no_grad():
+        # No need to predict flows for the last frame
         for idx in tqdm.tqdm(
             range(len(base_dataset_full_sequence)-1), desc="Rendering Flows"
         ):
-            # the full_sequence is entire_scene[start_idx:end_idx], entire scene for lidar datasets usually have 250+ frames
             torch_query_points = full_sequence.get_global_pc(idx)
             torch_full_mask = full_sequence.get_full_pc_mask(idx) 
             # A list of TimeSyncedScenewFlowFrame
