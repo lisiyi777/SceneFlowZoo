@@ -31,8 +31,7 @@ def save_flow_to_feather(save_path: Path, flows: np.ndarray, mask: np.ndarray):
     full_flow[mask] = flows
     output_df = pd.DataFrame(
         {
-            # "is_valid": mask.astype(bool),
-            "is_valid": np.ones(mask.shape[0], dtype=bool),
+            "is_valid": mask.astype(bool),
             "flow_tx_m": full_flow[:, 0],
             "flow_ty_m": full_flow[:, 1],
             "flow_tz_m": full_flow[:, 2],
@@ -81,10 +80,10 @@ def render_flows(
     # Use torch inference mode
     model.model = model.model.eval()
     with torch.no_grad():
+        # No need to predict flows for the last framw
         for idx in tqdm.tqdm(
             range(len(base_dataset_full_sequence)-1), desc="Rendering Flows"
         ):
-            # the full_sequence is entire_scene[start_idx:end_idx], entire scene for lidar datasets usually have 250+ frames
             torch_query_points = full_sequence.get_global_pc(idx)
             torch_full_mask = full_sequence.get_full_pc_mask(idx) 
             sum = torch_full_mask.sum()
