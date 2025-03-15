@@ -12,6 +12,7 @@ from .eulerflow import (
     EulerFlowDepth14OptimizationLoop,
     EulerFlowDepth12OptimizationLoop,
     EulerFlowDepth10OptimizationLoop,
+    EulerFlowDepth8OptimizationLoop,
     EulerFlowDepth6OptimizationLoop,
     EulerFlowDepth4OptimizationLoop,
     EulerFlowDepth2OptimizationLoop,

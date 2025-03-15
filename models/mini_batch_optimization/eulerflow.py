@@ -667,6 +667,14 @@ class EulerFlowDepth10OptimizationLoop(EulerFlowOptimizationLoop):
             model=EulerFlowMLP(num_layers=10)
         )
 
+class EulerFlowDepth8OptimizationLoop(EulerFlowOptimizationLoop):
+
+    def _model_constructor_args(
+        self, full_input_sequence: TorchFullFrameInputSequence
+    ) -> dict[str, any]:
+        return super()._model_constructor_args(full_input_sequence) | dict(
+            model=EulerFlowMLP(num_layers=8)
+        )
 
 class EulerFlowDepth6OptimizationLoop(EulerFlowOptimizationLoop):
 
