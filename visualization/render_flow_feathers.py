@@ -31,8 +31,8 @@ def save_flow_to_feather(save_path: Path, flows: np.ndarray, mask: np.ndarray):
     full_flow[mask] = flows
     output_df = pd.DataFrame(
         {
-            # "is_valid": mask.astype(bool),
-            "is_valid": np.ones(mask.shape[0], dtype=bool),
+            "is_valid": mask.astype(bool),
+            # "is_valid": np.ones(mask.shape[0], dtype=bool),
             "flow_tx_m": full_flow[:, 0],
             "flow_ty_m": full_flow[:, 1],
             "flow_tz_m": full_flow[:, 2],
@@ -87,7 +87,6 @@ def render_flows(
             # the full_sequence is entire_scene[start_idx:end_idx], entire scene for lidar datasets usually have 250+ frames
             torch_query_points = full_sequence.get_global_pc(idx)
             torch_full_mask = full_sequence.get_full_pc_mask(idx) 
-            sum = torch_full_mask.sum()
             # A list of TimeSyncedScenewFlowFrame
             scene_flow_frame = base_dataset_full_sequence[idx]
 
@@ -100,13 +99,18 @@ def render_flows(
             flow_np = query_result.flow.detach().cpu().numpy()
             mask_np = torch_full_mask.detach().cpu().numpy()
 
+            ego_to_global = full_sequence.get_pc_poses_ego_to_global(idx)
+            R = ego_to_global[:3, :3]
+            R_np = R.cpu().numpy()
+            flow_np_ego = (np.linalg.inv(R_np) @ flow_np.T).T
+
             pc_frame: SupervisedPointCloudFrame = scene_flow_frame.pc
             if isinstance(pc_frame, ColoredSupervisedPointCloudFrame):
                 color_np = pc_frame.colors[pc_frame.mask]
             else:
                 color_np = np.ones_like(flow_np)
             pc_np = pc_frame.global_pc.points
-            results.append(SceneFlowData(points=pc_np, colors=color_np, flows=flow_np, mask=mask_np, timestamp=scene_flow_frame.log_timestamp))
+            results.append(SceneFlowData(points=pc_np, colors=color_np, flows=flow_np_ego, mask=mask_np, timestamp=scene_flow_frame.log_timestamp))
 
     print("Saving results")
     arguments_lst = [(result, output_folder, idx) for idx, result in enumerate(results)]
