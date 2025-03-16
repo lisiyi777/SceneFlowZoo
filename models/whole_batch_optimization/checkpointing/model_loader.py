@@ -42,7 +42,11 @@ class OptimCheckpointModelLoader:
             return data
 
         def _load_checkpoint_path(checkpoint_root: Path, sequence_id: Path) -> Path:
-            checkpoint_dir = checkpoint_root / f"job_{sequence_id}"
+            if "lidar" in str(checkpoint_root).lower():
+                checkpoint_dir = checkpoint_root / f"job_{sequence_id}seqlen160idx000000"
+            else:
+                checkpoint_dir = checkpoint_root / f"job_{sequence_id}"
+                
             checkpoints = sorted(checkpoint_dir.glob("*.pth"))
             if len(checkpoints) == 0:
                 raise FileNotFoundError(f"No checkpoints found in {checkpoint_dir}")

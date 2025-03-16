@@ -3,7 +3,8 @@ _base_ = "./bucketed_nsfp_distillation_1x.py"
 train_sequence_dir = "/efs/argoverse2_tiny/val/"
 test_dataset_root = "/efs/argoverse2_tiny/val/"
 
-save_output_folder = "/efs/argoverse2_tiny/val_fastflow3d_rewrite_api/"
+# save_output_folder = "/efs/argoverse2_tiny/val_fastflow3d_rewrite_api/"
+save_output_folder = "./argoverse2_tiny/val_fastflow3d_rewrite_api/"
 
 epochs = 1
 

@@ -75,6 +75,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
         dataset_idx (int): The index of the dataset.
         sequence_log_id (str): Unique identifier for the dataset log.
         sequence_idx (int): Index of the sample in the dataset.
+        sequence_timestamp (int): Timestamp of the second to last frame (current frame)
         full_pc (torch.Tensor): The full point cloud as a float tensor of shape (K, PadN, 3),
             where K is the number of point clouds, PadN is the padded number of points per point cloud,
             and 3 represents the XYZ coordinates.
@@ -112,7 +113,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
     dataset_idx: int
     sequence_log_id: str
     sequence_idx: int
-
+    sequence_timestamp:int
     # PC Data
     full_pc: torch.Tensor  # (K, PadN, 3)
     full_pc_mask: torch.Tensor  # (K, PadN,)
@@ -135,6 +136,12 @@ class TorchFullFrameInputSequence(BaseInputSequence):
     # Operation Mode
     loader_type: LoaderType
 
+    def get_pc_poses_ego_to_global(self, idx) -> torch.Tensor:
+        """
+        Get the transformation from ego to global.
+        """
+        return self.pc_poses_ego_to_global[idx]
+    
     def get_pad_n(self) -> int:
         """
         Get the padded number of points per point cloud.
@@ -322,6 +329,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
 
         dataset_log_id = frame_list[0].log_id
         dataset_idx = frame_list[0].log_idx
+        dataset_timestamp = frame_list[-2].log_timestamp
 
         # PC data
         full_pc = torch.stack(
@@ -548,6 +556,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
             dataset_idx=idx,
             sequence_log_id=dataset_log_id,
             sequence_idx=dataset_idx,
+            sequence_timestamp=dataset_timestamp,
             full_pc=full_pc.float(),
             full_pc_mask=full_pc_mask.float(),
             full_pc_gt_flowed=full_pc_gt_flowed.float(),
@@ -639,12 +648,12 @@ class TorchFullFrameOutputSequence(BaseOutputSequence):
     A standardized set of outputs for Bucketed Scene Flow evaluation.
 
     Args:
-        ego_flows: torch.Tensor  # (K - 1, PadN, 3)
-        valid_flow_mask: torch.Tensor  # (K - 1, PadN,)
+        ego_flows: torch.Tensor  # (1, PadN, 3)
+        valid_flow_mask: torch.Tensor  # (1, PadN,)
     """
 
-    ego_flows: torch.Tensor  # (K - 1, PadN, 3)
-    valid_flow_mask: torch.Tensor  # (K - 1, PadN, )
+    ego_flows: torch.Tensor  # The estimated flow for the second-to-last pc in its ego frame
+    valid_flow_mask: torch.Tensor
 
     @staticmethod
     def from_ego_lidar_flow_list(
