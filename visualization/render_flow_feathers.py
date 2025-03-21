@@ -31,8 +31,7 @@ def save_flow_to_feather(save_path: Path, flows: np.ndarray, mask: np.ndarray):
     full_flow[mask] = flows
     output_df = pd.DataFrame(
         {
-            "is_valid": mask.astype(bool),
-            # "is_valid": np.ones(mask.shape[0], dtype=bool),
+            "is_valid": np.ones(mask.shape[0], dtype=bool),
             "flow_tx_m": full_flow[:, 0],
             "flow_ty_m": full_flow[:, 1],
             "flow_tz_m": full_flow[:, 2],

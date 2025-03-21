@@ -20,7 +20,6 @@ def construct_model(name: str, args: dict[str, Any]) -> BaseTorchModel:
 
 from .constant_vector_baseline import ConstantVectorBaseline
 from .feed_forward.deflow import DeFlow
-from .feed_forward.flow4d import Flow4D
 from .feed_forward.fast_flow_3d import (
     FastFlow3D,
     FastFlow3DBucketedLoaderLoss,
@@ -46,7 +45,6 @@ from .mini_batch_optimization import (
     EulerFlowDepth14OptimizationLoop,
     EulerFlowDepth12OptimizationLoop,
     EulerFlowDepth10OptimizationLoop,
-    EulerFlowDepth8OptimizationLoop,
     EulerFlowDepth6OptimizationLoop,
     EulerFlowDepth4OptimizationLoop,
     EulerFlowDepth2OptimizationLoop,
@@ -57,7 +55,6 @@ from .mini_batch_optimization import (
 
 importable_models = [
     DeFlow,
-    Flow4D,
     FastFlow3D,
     Flow4D,
     ConstantVectorBaseline,
@@ -77,7 +74,6 @@ importable_models = [
     EulerFlowDepth14OptimizationLoop,
     EulerFlowDepth12OptimizationLoop,
     EulerFlowDepth10OptimizationLoop,
-    EulerFlowDepth8OptimizationLoop,
     EulerFlowDepth6OptimizationLoop,
     EulerFlowDepth4OptimizationLoop,
     EulerFlowDepth2OptimizationLoop,

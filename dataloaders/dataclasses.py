@@ -75,7 +75,6 @@ class TorchFullFrameInputSequence(BaseInputSequence):
         dataset_idx (int): The index of the dataset.
         sequence_log_id (str): Unique identifier for the dataset log.
         sequence_idx (int): Index of the sample in the dataset.
-        sequence_timestamp (int): Timestamp of the second to last frame (current frame)
         full_pc (torch.Tensor): The full point cloud as a float tensor of shape (K, PadN, 3),
             where K is the number of point clouds, PadN is the padded number of points per point cloud,
             and 3 represents the XYZ coordinates.

@@ -1,5 +1,5 @@
 POINT_CLOUD_RANGE = (-51.2, -51.2, -2.2, 51.2, 51.2, 4.2)
-VOXEL_SIZE = (0.2, 0.2, 0.2)
+VOXEL_SIZE = (0.2, 0.2, 0.4)
 PSEUDO_IMAGE_DIMS = (512, 512)
 
 epochs = 50

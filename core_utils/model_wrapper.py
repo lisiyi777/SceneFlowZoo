@@ -64,7 +64,7 @@ class ModelWrapper(pl.LightningModule):
         )
 
         if reset_learning_rate:
-            print("Resetting learning rate to the one in the config.")
+            print("#####################################Resetting learning rate to the one in the config.")
             checkpoint.pop("optimizer_states")
             checkpoint.pop("lr_schedulers")
 
@@ -110,7 +110,7 @@ class ModelWrapper(pl.LightningModule):
     def on_validation_epoch_end(self):
         if not self.has_labels:
             return {}
-
+                
         gathered_evaluator_list: list[EvalWrapper] = [
             None for _ in range(torch.distributed.get_world_size())
         ]
@@ -128,3 +128,4 @@ class ModelWrapper(pl.LightningModule):
         gathered_evaluator = sum(e.evaluator for e in gathered_evaluator_list)
         print("Gathered evaluator of length: ", len(gathered_evaluator))
         return gathered_evaluator.compute_results()
+

@@ -110,6 +110,7 @@ class FastFlow3DBucketedLoaderLoss(FastFlow3DBaseLoss):
             loss_difference = flow_difference[valid_loss_mask]
             diff_l2 = torch.norm(loss_difference, dim=1, p=2).mean()
             total_loss += diff_l2
+        print("loss", total_loss)
         return {
             "loss": total_loss,
         }
