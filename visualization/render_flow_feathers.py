@@ -6,19 +6,13 @@ import numpy as np
 from models.whole_batch_optimization.checkpointing.model_loader import OptimCheckpointModelLoader
 from dataloaders import TorchFullFrameInputSequence
 from bucketed_scene_flow_eval.datastructures import (
-    O3DVisualizer,
-    PointCloud,
-    TimeSyncedSceneFlowFrame,
     SupervisedPointCloudFrame,
-    ColoredSupervisedPointCloudFrame,
 )
 from bucketed_scene_flow_eval.interfaces import AbstractDataset
-from visualization.vis_lib import BaseCallbackVisualizer
 from bucketed_scene_flow_eval.utils import load_json, save_json
 from dataclasses import dataclass
 from models.mini_batch_optimization import EulerFlowModel
-from models.components.neural_reps import ModelFlowResult, ModelOccFlowResult, QueryDirection
-import open3d as o3d
+from models.components.neural_reps import ModelFlowResult, QueryDirection
 import json
 import tqdm
 import multiprocessing as mp
@@ -32,6 +26,8 @@ def save_flow_to_feather(save_path: Path, flows: np.ndarray, mask: np.ndarray):
     output_df = pd.DataFrame(
         {
             "is_valid": np.ones(mask.shape[0], dtype=bool),
+            # TODO: "is_classes"
+            # TODO: a new dataclass name
             "flow_tx_m": full_flow[:, 0],
             "flow_ty_m": full_flow[:, 1],
             "flow_tz_m": full_flow[:, 2],
@@ -42,15 +38,11 @@ def save_flow_to_feather(save_path: Path, flows: np.ndarray, mask: np.ndarray):
 @dataclass
 class SceneFlowData:
     points: np.ndarray
-    colors: np.ndarray
     flows: np.ndarray
     mask: np.ndarray
     timestamp: str
 
     def __post_init__(self):
-        assert (
-            self.points.shape[0] == self.colors.shape[0]
-        ), f"{self.points.shape} != {self.colors.shape}"
         assert (
             self.points.shape[0] == self.flows.shape[0]
         ), f"{self.points.shape} != {self.flows.shape}"
@@ -103,12 +95,8 @@ def render_flows(
             flow_np_ego = (np.linalg.inv(R_np) @ flow_np.T).T
 
             pc_frame: SupervisedPointCloudFrame = scene_flow_frame.pc
-            if isinstance(pc_frame, ColoredSupervisedPointCloudFrame):
-                color_np = pc_frame.colors[pc_frame.mask]
-            else:
-                color_np = np.ones_like(flow_np)
             pc_np = pc_frame.global_pc.points
-            results.append(SceneFlowData(points=pc_np, colors=color_np, flows=flow_np_ego, mask=mask_np, timestamp=scene_flow_frame.log_timestamp))
+            results.append(SceneFlowData(points=pc_np, flows=flow_np_ego, mask=mask_np, timestamp=scene_flow_frame.log_timestamp))
 
     print("Saving results")
     arguments_lst = [(result, output_folder, idx) for idx, result in enumerate(results)]

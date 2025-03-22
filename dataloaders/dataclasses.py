@@ -7,6 +7,7 @@ from bucketed_scene_flow_eval.datastructures import (
     RGBImage,
     RGBFrameLookup,
     EgoLidarFlow,
+    MultiStepEgoLidarFlow,
     EgoLidarDistance,
     PointCloudFrame,
     RGBFrame,
@@ -75,6 +76,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
         dataset_idx (int): The index of the dataset.
         sequence_log_id (str): Unique identifier for the dataset log.
         sequence_idx (int): Index of the sample in the dataset.
+        sequence_timestamp (int): Timestamp of the second to last frame (current frame)
         full_pc (torch.Tensor): The full point cloud as a float tensor of shape (K, PadN, 3),
             where K is the number of point clouds, PadN is the padded number of points per point cloud,
             and 3 represents the XYZ coordinates.
@@ -119,6 +121,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
     full_pc_gt_flowed: torch.Tensor  # (K-1, PadN, 3)
     full_pc_gt_flowed_mask: torch.Tensor  # (K-1, PadN, )
     full_pc_gt_class: torch.Tensor  # (K-1, PadN,)
+    full_pc_gt_multi_step_flowed: torch.Tensor  # (K-1, rollout_len, PadN, 3)
     pc_poses_sensor_to_ego: torch.Tensor  # (K, 4, 4)
     pc_poses_ego_to_global: torch.Tensor  # (K, 4, 4)
 
@@ -401,6 +404,32 @@ class TorchFullFrameInputSequence(BaseInputSequence):
                 for frame in flowed_pc_frame_list
             ]
         )
+        # Check if we have multi-step flows and create a list of flowed point clouds for each step
+        multi_step_flows = []
+        for frame in flow_frame_list:
+            if {hasattr(frame.flow, 'multi_step_flows')}:
+                if frame.flow._get_multi_step_length() > 0:
+                    frame_flows = []
+                    for index in range(frame.flow._get_multi_step_length()):
+                        # For each frame, get all the multi-step flows and apply them to get flowed point clouds
+                        multi_step_flow = frame.flow.make_ego_lidar_flow(index)
+                        flowed_pc = frame.pc.flow(multi_step_flow)
+                        frame_flows.append(
+                            torch.from_numpy(
+                                to_fixed_array_np(
+                                    flowed_pc.full_pc.points,
+                                    max_len=pc_max_len,
+                                    allow_pc_slicing=allow_pc_slicing
+                                )
+                            )
+                        )
+                    multi_step_flows.append(torch.stack(frame_flows))  
+                
+        if len(multi_step_flows) > 0:
+            # TODO: make it to a list
+            full_pc_gt_multi_step_flowed = torch.stack(multi_step_flows)     #(seq_length-1, rollout_step-1, PadN, 3)
+        else:
+            full_pc_gt_multi_step_flowed = torch.empty(0, 0, 0, 3)
 
         full_pc_gt_class = torch.stack(
             [
@@ -560,6 +589,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
             full_pc_mask=full_pc_mask.float(),
             full_pc_gt_flowed=full_pc_gt_flowed.float(),
             full_pc_gt_flowed_mask=full_pc_gt_flowed_mask.float(),
+            full_pc_gt_multi_step_flowed=full_pc_gt_multi_step_flowed.float(),
             full_pc_gt_class=full_pc_gt_class.float(),
             auxillary_pc=auxillary_pc.float() if auxillary_pc is not None else None,
             pc_poses_sensor_to_ego=pc_poses_sensor_to_ego.float(),

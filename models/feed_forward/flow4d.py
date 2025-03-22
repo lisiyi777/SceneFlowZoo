@@ -89,8 +89,8 @@ class Flow4D(BaseTorchModel):
     ) -> None:
         super().__init__()
 
-        point_output_ch = 20
-        voxel_output_ch = 20
+        point_output_ch = 8
+        voxel_output_ch = 8
         self.SEQUENCE_LENGTH = SEQUENCE_LENGTH
         self.embedder_4D = DynamicEmbedder_4D(voxel_size=VOXEL_SIZE,
                                         pseudo_image_dims=[PSEUDO_IMAGE_DIMS[0], PSEUDO_IMAGE_DIMS[1], FEATURE_CHANNELS, SEQUENCE_LENGTH], 
