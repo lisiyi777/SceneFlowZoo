@@ -52,9 +52,6 @@ def main():
 
     print("Train dataloader length:", len(train_dataloader))
     print("Val dataloader length:", len(val_dataloader))       
-    print(len(train_dataloader.dataset)) 
-    print(len(val_dataloader.dataset)) 
-    print(val_dataloader.sampler)
 
     model = setup_model(cfg, evaluator, args.resume_from_checkpoint)
 
@@ -99,8 +96,6 @@ def main():
     print("Starting training")
     print("Length of train dataloader:", len(train_dataloader))
     print("Length of val dataloader:", len(val_dataloader))
-    print(trainer.limit_val_batches)
-    print(trainer.num_sanity_val_steps)
     trainer.fit(model, train_dataloader, val_dataloader)
 
 

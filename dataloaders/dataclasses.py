@@ -407,7 +407,8 @@ class TorchFullFrameInputSequence(BaseInputSequence):
         # Check if we have multi-step flows and create a list of flowed point clouds for each step
         multi_step_flows = []
         for frame in flow_frame_list:
-            if {hasattr(frame.flow, 'multi_step_flows')}:
+            # if {hasattr(frame.flow, 'multi_step_flows')}:
+            if isinstance(frame.flow, MultiStepEgoLidarFlow):
                 if frame.flow._get_multi_step_length() > 0:
                     frame_flows = []
                     for index in range(frame.flow._get_multi_step_length()):
