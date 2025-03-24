@@ -6,13 +6,19 @@ import numpy as np
 from models.whole_batch_optimization.checkpointing.model_loader import OptimCheckpointModelLoader
 from dataloaders import TorchFullFrameInputSequence
 from bucketed_scene_flow_eval.datastructures import (
+    O3DVisualizer,
+    PointCloud,
+    TimeSyncedSceneFlowFrame,
     SupervisedPointCloudFrame,
+    ColoredSupervisedPointCloudFrame,
 )
 from bucketed_scene_flow_eval.interfaces import AbstractDataset
+from visualization.vis_lib import BaseCallbackVisualizer
 from bucketed_scene_flow_eval.utils import load_json, save_json
 from dataclasses import dataclass
 from models.mini_batch_optimization import EulerFlowModel
-from models.components.neural_reps import ModelFlowResult, QueryDirection
+from models.components.neural_reps import ModelFlowResult, ModelOccFlowResult, QueryDirection
+import open3d as o3d
 import json
 import tqdm
 import multiprocessing as mp
@@ -26,8 +32,7 @@ def save_flow_to_feather(save_path: Path, flows: np.ndarray, mask: np.ndarray):
     output_df = pd.DataFrame(
         {
             "is_valid": np.ones(mask.shape[0], dtype=bool),
-            # TODO: "is_classes"
-            # TODO: a new dataclass name
+            "classes_0": np.full(mask.shape[0], -1, dtype=np.int8),
             "flow_tx_m": full_flow[:, 0],
             "flow_ty_m": full_flow[:, 1],
             "flow_tz_m": full_flow[:, 2],
@@ -38,11 +43,15 @@ def save_flow_to_feather(save_path: Path, flows: np.ndarray, mask: np.ndarray):
 @dataclass
 class SceneFlowData:
     points: np.ndarray
+    colors: np.ndarray
     flows: np.ndarray
     mask: np.ndarray
     timestamp: str
 
     def __post_init__(self):
+        assert (
+            self.points.shape[0] == self.colors.shape[0]
+        ), f"{self.points.shape} != {self.colors.shape}"
         assert (
             self.points.shape[0] == self.flows.shape[0]
         ), f"{self.points.shape} != {self.flows.shape}"
@@ -79,6 +88,7 @@ def render_flows(
             torch_full_mask = full_sequence.get_full_pc_mask(idx) 
             # A list of TimeSyncedScenewFlowFrame
             scene_flow_frame = base_dataset_full_sequence[idx]
+            classes = scene_flow_frame.pc.full_pc_classes
 
             query_result: ModelFlowResult = model.model(
                 torch_query_points,
@@ -86,17 +96,21 @@ def render_flows(
                 len(full_sequence),
                 QueryDirection.FORWARD,
             )
+            ego_to_global = full_sequence.get_pc_poses_ego_to_global(idx)
+            global_to_ego = torch.inverse(ego_to_global[:3, :3])
+            flow_ego = (global_to_ego @ query_result.flow.T).T
+
             flow_np = query_result.flow.detach().cpu().numpy()
             mask_np = torch_full_mask.detach().cpu().numpy()
-
-            ego_to_global = full_sequence.get_pc_poses_ego_to_global(idx)
-            R = ego_to_global[:3, :3]
-            R_np = R.cpu().numpy()
-            flow_np_ego = (np.linalg.inv(R_np) @ flow_np.T).T
+            flow_np_ego = flow_ego.detach().cpu().numpy() 
 
             pc_frame: SupervisedPointCloudFrame = scene_flow_frame.pc
+            if isinstance(pc_frame, ColoredSupervisedPointCloudFrame):
+                color_np = pc_frame.colors[pc_frame.mask]
+            else:
+                color_np = np.ones_like(flow_np)
             pc_np = pc_frame.global_pc.points
-            results.append(SceneFlowData(points=pc_np, flows=flow_np_ego, mask=mask_np, timestamp=scene_flow_frame.log_timestamp))
+            results.append(SceneFlowData(points=pc_np, colors=color_np, flows=flow_np_ego, mask=mask_np, timestamp=scene_flow_frame.log_timestamp))
 
     print("Saving results")
     arguments_lst = [(result, output_folder, idx) for idx, result in enumerate(results)]

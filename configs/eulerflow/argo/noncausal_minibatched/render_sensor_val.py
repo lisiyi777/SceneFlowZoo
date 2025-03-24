@@ -1,9 +1,9 @@
 has_labels = False
 
-SEQUENCE_LENGTH = 160
+SEQUENCE_LENGTH = 150
 
-test_dataset_root = "/bigdata/argoverse_lidar/train/"
-save_output_folder = "/bigdata/argoverse_lidar_euler_depth18_feather/"
+test_dataset_root = "/bigdata/argoverse2/val/"
+save_output_folder = "/efs/argoverse_sensor_euler_depth18_feather"
 
 model = dict(
     name="EulerFlowDepth18OptimizationLoop",

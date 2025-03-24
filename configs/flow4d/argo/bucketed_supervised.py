@@ -1,11 +1,11 @@
 POINT_CLOUD_RANGE = (-51.2, -51.2, -2.2, 51.2, 51.2, 4.2)
-VOXEL_SIZE = (0.2, 0.2, 0.4)
+VOXEL_SIZE = (0.2, 0.2, 0.2)
 PSEUDO_IMAGE_DIMS = (512, 512)
 
-epochs = 50
-learning_rate = 1e-4
-save_every = 500
-validate_every = 500
+epochs = 15
+learning_rate = 1e-3
+save_every = 5000
+validate_every = None
 gradient_clip_val = 5.0
 
 SEQUENCE_LENGTH = 5
@@ -19,6 +19,7 @@ model = dict(
         SEQUENCE_LENGTH=SEQUENCE_LENGTH,
     ),
 )
+
 
 ######## TEST DATASET ########
 
@@ -35,11 +36,11 @@ test_dataset = dict(
         eval_type="bucketed_epe",
         expected_camera_shape=(194, 256, 3),
         # point_cloud_range=None,
-        eval_args=dict(output_path="eval_results/bucketed_epe/nsfp_distillation_1x/"),
+        eval_args=dict(output_path="eval_results/bucketed_epe_supervised/supervised_1x"),
     ),
 )
 
-test_dataloader = dict(args=dict(batch_size=4, num_workers=4, shuffle=False, pin_memory=True))
+test_dataloader = dict(args=dict(batch_size=4, num_workers=1, shuffle=False, pin_memory=True))
 
 ######## TRAIN DATASET ########
 
