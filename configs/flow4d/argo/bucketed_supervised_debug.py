@@ -1,7 +1,7 @@
 _base_ = "./bucketed_supervised.py"
 
-train_sequence_dir = "/efs/argoverse2/argoverse2_mini_debug/val/"
-test_dataset_root = "/efs/argoverse2/argoverse2_mini_debug/val/"
+train_sequence_dir = "/efs/argoverse2_mini_debug/val/"
+test_dataset_root = "/efs/argoverse2_mini_debug/val/"
 
 save_output_folder = "bigdata/argoverse2_mini_debug/val_flow4d/"
 

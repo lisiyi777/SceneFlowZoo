@@ -9,25 +9,31 @@ save_output_folder = "bigdata/argoverse2_mini_debug/val_flow4d_rollouts/"
 
 epochs = 15
 learning_rate = 1e-4
+seq_length=5
+rollout_steps=1
 
 model = dict(
     args=dict(
         FEATURE_CHANNELS=32,
+        rollout_steps=rollout_steps,
     ),
 )
+
+
 
 train_dataset = dict( 
     args=dict(
         root_dir=train_sequence_dir, 
         flow_data_path=train_flow_data_dir, 
         use_gt_flow=False, 
-        load_multistepflow=True,
-        rollout_steps=3,
+        rollout_steps=rollout_steps,
+        subsequence_length=seq_length+rollout_steps-1,
         ),
     )
 test_dataset = dict(
     args=dict(
         root_dir=test_dataset_root,
+        subsequence_length=seq_length,
         eval_args=dict(output_path="eval_results/bucketed_epe_mini_debug/supervised_rollouts/"),
     )
 )

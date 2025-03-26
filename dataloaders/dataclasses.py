@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import List
 
 import numpy as np
 import torch
@@ -121,7 +122,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
     full_pc_gt_flowed: torch.Tensor  # (K-1, PadN, 3)
     full_pc_gt_flowed_mask: torch.Tensor  # (K-1, PadN, )
     full_pc_gt_class: torch.Tensor  # (K-1, PadN,)
-    full_pc_gt_multi_step_flowed: torch.Tensor  # (K-1, rollout_len, PadN, 3)
+    full_pc_gt_multi_step_flowed: List[torch.Tensor]  # (K-1, (rollout_len, PadN, 3))
     pc_poses_sensor_to_ego: torch.Tensor  # (K, 4, 4)
     pc_poses_ego_to_global: torch.Tensor  # (K, 4, 4)
 
@@ -174,6 +175,13 @@ class TorchFullFrameInputSequence(BaseInputSequence):
         """
         return from_fixed_array_torch(self.full_pc_gt_flowed_mask[idx]) > 0
 
+    def get_full_ego_pc_gt_multi_step_flowed(self, idx: int, step: int) -> torch.Tensor:
+        """
+        Get the point cloud multi step flow at the specified index.
+        """
+        ref_device = self.full_pc.device
+        return from_fixed_array_torch(self.full_pc_gt_multi_step_flowed[idx][step]).to(ref_device)
+    
     def get_ego_pc(self, idx: int) -> torch.Tensor:
         full_pc = self.get_full_ego_pc(idx)
         full_mask = self.get_full_pc_mask(idx)
@@ -404,15 +412,15 @@ class TorchFullFrameInputSequence(BaseInputSequence):
                 for frame in flowed_pc_frame_list
             ]
         )
+
         # Check if we have multi-step flows and create a list of flowed point clouds for each step
-        multi_step_flows = []
+        full_pc_gt_multi_step_flowed = [] # List[Tensor(valid_rollout_steps, PadN, 3)]
         for frame in flow_frame_list:
-            # if {hasattr(frame.flow, 'multi_step_flows')}:
             if isinstance(frame.flow, MultiStepEgoLidarFlow):
-                if frame.flow._get_multi_step_length() > 0:
+                step_len = frame.flow._get_multi_step_length()
+                if step_len > 0:
                     frame_flows = []
-                    for index in range(frame.flow._get_multi_step_length()):
-                        # For each frame, get all the multi-step flows and apply them to get flowed point clouds
+                    for index in range(step_len):
                         multi_step_flow = frame.flow.make_ego_lidar_flow(index)
                         flowed_pc = frame.pc.flow(multi_step_flow)
                         frame_flows.append(
@@ -424,13 +432,11 @@ class TorchFullFrameInputSequence(BaseInputSequence):
                                 )
                             )
                         )
-                    multi_step_flows.append(torch.stack(frame_flows))  
-                
-        if len(multi_step_flows) > 0:
-            # TODO: make it to a list
-            full_pc_gt_multi_step_flowed = torch.stack(multi_step_flows)     #(seq_length-1, rollout_step-1, PadN, 3)
-        else:
-            full_pc_gt_multi_step_flowed = torch.empty(0, 0, 0, 3)
+                    frame_flows_tensor = torch.stack(frame_flows)  # (valid_rollout_steps, PadN, 3)
+                    full_pc_gt_multi_step_flowed.append(frame_flows_tensor)
+
+        device = full_pc.device
+        full_pc_gt_multi_step_flowed = [f.to(device).float() for f in full_pc_gt_multi_step_flowed]
 
         full_pc_gt_class = torch.stack(
             [
@@ -590,7 +596,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
             full_pc_mask=full_pc_mask.float(),
             full_pc_gt_flowed=full_pc_gt_flowed.float(),
             full_pc_gt_flowed_mask=full_pc_gt_flowed_mask.float(),
-            full_pc_gt_multi_step_flowed=full_pc_gt_multi_step_flowed.float(),
+            full_pc_gt_multi_step_flowed = full_pc_gt_multi_step_flowed,
             full_pc_gt_class=full_pc_gt_class.float(),
             auxillary_pc=auxillary_pc.float() if auxillary_pc is not None else None,
             pc_poses_sensor_to_ego=pc_poses_sensor_to_ego.float(),
