@@ -26,6 +26,7 @@ import pandas as pd
 import pyarrow.feather as feather
 from render_flow_feathers import SceneFlowData 
 
+from sklearn.neighbors import NearestNeighbors
 
 def save_multi_step_flow_to_feather(save_path: Path, flows: dict[int, np.ndarray], mask: np.ndarray):
     full_flows = {
@@ -87,6 +88,12 @@ class MultiStepSceneFlowData:
 def save_result(result: MultiStepSceneFlowData, parent_folder: Path, idx: int):
     result.save(parent_folder, idx)
 
+def knn_match_ratio(warped_pc: np.ndarray, target_pc: np.ndarray, threshold=0.3):
+    knn = NearestNeighbors(n_neighbors=1).fit(target_pc)
+    dists, _ = knn.kneighbors(warped_pc)
+    match_ratio = (dists < threshold).sum() / len(dists)
+    return match_ratio, dists
+
 def render_multi_step_flows(
     model: EulerFlowModel,
     full_sequence: TorchFullFrameInputSequence,
@@ -95,44 +102,41 @@ def render_multi_step_flows(
     rollout_steps: int = 5
 ) -> list[MultiStepSceneFlowData]:
     base_dataset_full_sequence = base_dataset[full_sequence.sequence_idx]
-
     results: list[MultiStepSceneFlowData] = []
 
     model.model = model.model.eval()
     with torch.no_grad():
-        # No need to predict flows for the last frame
-        for idx in tqdm.tqdm(
-            range(len(base_dataset_full_sequence)-1), desc="Rendering Multi-step Flows"
-        ):
-            torch_query_points = full_sequence.get_global_pc(idx)
-            torch_full_mask = full_sequence.get_full_pc_mask(idx)
+        for idx in tqdm.tqdm(range(len(base_dataset_full_sequence) - 1), desc="Rendering Multi-step Flows"):
+            torch_query_points = full_sequence.get_global_pc(idx)      # (PadN, 3)
+            torch_full_mask = full_sequence.get_full_pc_mask(idx)      # (PadN,)
             scene_flow_frame = base_dataset_full_sequence[idx]
 
             multi_step_flows = []
             current_points = torch_query_points.clone()
-            
-            # Iteratively compute flows for num_steps
-            for step in range(min(rollout_steps, len(base_dataset_full_sequence)-idx-1)):
+
+            for step in range(min(rollout_steps, len(base_dataset_full_sequence) - idx - 1)):
                 query_result: ModelFlowResult = model.model(
-                    current_points,
-                    idx + step,
-                    len(full_sequence),
-                    QueryDirection.FORWARD,
+                    current_points, idx + step, len(full_sequence), QueryDirection.FORWARD,
                 )
-                
-                # Transform flow to ego frame
+
                 ego_to_global = full_sequence.get_pc_poses_ego_to_global(idx + step)
                 global_to_ego = torch.inverse(ego_to_global[:3, :3])
                 flow_ego = (global_to_ego @ query_result.flow.T).T
-                
+
                 multi_step_flows.append(flow_ego.detach().cpu().numpy())
-                
-                # Update points for next step
                 current_points = current_points + query_result.flow
+                current_points_np = current_points.detach().cpu().numpy()
+
+                if idx + step < len(base_dataset_full_sequence):
+                    target_pc_np = base_dataset_full_sequence[idx + step + 1].pc.global_pc.points
+                    if step == 0:
+                        match_ratio, dists = knn_match_ratio(torch_query_points.detach().cpu().numpy(), target_pc_np)
+                        print(f"idx={idx} | baseline match ratio = {match_ratio:.3f}")
+                    match_ratio, dists = knn_match_ratio(current_points_np, target_pc_np)
+                    print(f"idx={idx} | step={step} | match ratio = {match_ratio:.3f}")
 
             # Convert to numpy arrays
             mask_np = torch_full_mask.detach().cpu().numpy()
-            
             pc_frame: SupervisedPointCloudFrame = scene_flow_frame.pc
             if isinstance(pc_frame, ColoredSupervisedPointCloudFrame):
                 color_np = pc_frame.colors[pc_frame.mask]
@@ -140,7 +144,7 @@ def render_multi_step_flows(
                 color_np = np.ones_like(multi_step_flows[0])
             pc_np = pc_frame.global_pc.points
 
-
+            # Save result
             results.append(
                 MultiStepSceneFlowData(
                     points=pc_np,

@@ -49,24 +49,39 @@ class SceneFlowData:
     timestamp: str
 
     def __post_init__(self):
-        assert (
-            self.points.shape[0] == self.colors.shape[0]
-        ), f"{self.points.shape} != {self.colors.shape}"
-        assert (
-            self.points.shape[0] == self.flows.shape[0]
-        ), f"{self.points.shape} != {self.flows.shape}"
-        assert (
-            np.sum(self.mask) == self.flows.shape[0]
-        ), f"Number of valid points in mask ({np.sum(self.mask)}) does not match flow array size ({self.flows.shape[0]})"
+        assert self.points.shape[0] == self.colors.shape[0], f"{self.points.shape} != {self.colors.shape}"
+        assert self.points.shape[0] == self.flows.shape[0], f"{self.points.shape} != {self.flows.shape}"
+        assert np.sum(self.mask) == self.flows.shape[0], f"Number of valid points in mask ({np.sum(self.mask)}) does not match flow array size ({self.flows.shape[0]})"
 
     def save(self, parent_folder: Path, idx: int):
         parent_folder.mkdir(parents=True, exist_ok=True)
+
+        # Save feather as before
         feather_path = parent_folder / f"{self.timestamp}.feather"
         save_flow_to_feather(feather_path, self.flows, self.mask)
 
+        # NEW: Save PLY file
+        ply_path = parent_folder / f"{self.timestamp}.ply"
+        with open(ply_path, "w") as f:
+            f.write("ply\n")
+            f.write("format ascii 1.0\n")
+            f.write(f"element vertex {self.points.shape[0]}\n")
+            f.write("property float x\n")
+            f.write("property float y\n")
+            f.write("property float z\n")
+            f.write("property uchar red\n")
+            f.write("property uchar green\n")
+            f.write("property uchar blue\n")
+            f.write("end_header\n")
+            for point, color in zip(self.points, self.colors):
+                x, y, z = point
+                r, g, b = (color * 255).astype(int)  # assumes color in [0,1]
+                f.write(f"{x:.4f} {y:.4f} {z:.4f} {r} {g} {b}\n")
+
+
 def save_result(result: SceneFlowData, parent_folder: Path, idx: int):
     result.save(parent_folder, idx)
-
+    
 
 def render_flows(
     model: EulerFlowModel,
@@ -105,11 +120,11 @@ def render_flows(
             flow_np_ego = flow_ego.detach().cpu().numpy() 
 
             pc_frame: SupervisedPointCloudFrame = scene_flow_frame.pc
-            if isinstance(pc_frame, ColoredSupervisedPointCloudFrame):
-                color_np = pc_frame.colors[pc_frame.mask]
-            else:
-                color_np = np.ones_like(flow_np)
             pc_np = pc_frame.global_pc.points
+
+            pc_color = full_sequence.get_pc_rgb(idx)
+            color_np = pc_color.detach().cpu().numpy() 
+
             results.append(SceneFlowData(points=pc_np, colors=color_np, flows=flow_np_ego, mask=mask_np, timestamp=scene_flow_frame.log_timestamp))
 
     print("Saving results")

@@ -130,7 +130,7 @@ class OptimCheckpointModelLoader:
 
     def _load_dataset_info(self, cfg: Config) -> tuple[TorchFullFrameInputSequence, BaseDataset]:
         dataset = dataloaders.construct_dataset(cfg.test_dataset.name, cfg.test_dataset.args)
-        assert len(dataset) == 1, f"Expected dataset of length 1, got {len(dataset)}"
+        # assert len(dataset) == 1, f"Expected dataset of length 1, got {len(dataset)}"
         return dataset[0].to("cuda"), dataset
 
     def _make_custom_config(

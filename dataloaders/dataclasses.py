@@ -3,6 +3,7 @@ from typing import List
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from bucketed_scene_flow_eval.datastructures import (
     TimeSyncedSceneFlowFrame,
     RGBImage,
@@ -21,6 +22,7 @@ from bucketed_scene_flow_eval.interfaces import (
 )
 
 from typing import Type, Union
+import matplotlib.pyplot as plt
 
 from pointclouds import (
     from_fixed_array_np,
@@ -87,6 +89,8 @@ class TorchFullFrameInputSequence(BaseInputSequence):
             of shape (K - 1, PadN, 3), following the same conventions as `full_pc`.
         full_pc_gt_flowed_mask (torch.Tensor): A boolean mask for the ground truth flowed point
             cloud of shape (K - 1, PadN, ).
+        full_pc_gt_multi_step_flowed (List[torch.Tensor]): A list of multi-step ground truth flowed point clouds.
+            Each element is a tensor of shape (T, PadN, 3), where T is the extra rollout length.
         full_pc_gt_class (torch.Tensor): The ground truth class for each point in the point cloud
             as a long tensor of shape (K - 1, PadN).
         pc_poses_sensor_to_ego (torch.Tensor): Sensor to ego poses for each point cloud as a float tensor
@@ -109,6 +113,8 @@ class TorchFullFrameInputSequence(BaseInputSequence):
             of shape (K, NumIm, PadN, 2), where PadN is the padded number of points per point cloud.
         rgb_projected_points_mask (torch.Tensor): A boolean mask for the projected points of shape
             (K, NumIm, PadN, ).
+        pc_colors (torch.Tensor): The RGB color feature for each point cloud point, derived from projected RGB images.
+            Shape: (K, PadN, 3). Points without valid projections will be set dummy values (1.0).
         loader_type (LoaderType): The operation mode of the dataset.
     """
 
@@ -135,6 +141,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
     rgb_poses_ego_to_global: torch.Tensor  # (K, NumIm, 4, 4)
     rgb_projected_points: torch.Tensor  # (K, NumIm, PadN, 2)
     rgb_projected_points_mask: torch.Tensor  # (K, NumIm, PadN, )
+    pc_colors: torch.Tensor # (K, PadN, 3)
 
     # Operation Mode
     loader_type: LoaderType
@@ -182,6 +189,14 @@ class TorchFullFrameInputSequence(BaseInputSequence):
         ref_device = self.full_pc.device
         return from_fixed_array_torch(self.full_pc_gt_multi_step_flowed[idx][step]).to(ref_device)
     
+    def get_pc_rgb(self, idx: int) -> torch.Tensor:
+        """
+        Get the RGB features of pointclouds at the specified index.
+        """
+        pc_colors_filtered = from_fixed_array_torch(self.pc_colors[idx])
+        full_mask = self.get_full_pc_mask(idx)
+        return pc_colors_filtered[full_mask]
+
     def get_ego_pc(self, idx: int) -> torch.Tensor:
         full_pc = self.get_full_ego_pc(idx)
         full_mask = self.get_full_pc_mask(idx)
@@ -267,7 +282,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
             mask=global_mask,
             origin=sensor_origin,
         )
-
+    
     def __post_init__(self):
         # Check shapes for point cloud data
         assert (
@@ -321,6 +336,18 @@ class TorchFullFrameInputSequence(BaseInputSequence):
         assert isinstance(
             self.loader_type, LoaderType
         ), f"Expected operation_mode to be a LoaderType, got {type(self.loader_type)}"
+
+        assert (
+            self.pc_colors.dim() == 3
+            and self.pc_colors.shape[2] == 3
+        ), f"Expected pc_colors to have shape (K, PadN, 3), matching full_pc {self.full_pc.shape}, got {self.pc_colors.shape}"
+
+        assert isinstance(self.full_pc_gt_multi_step_flowed, list), "Expected full_pc_gt_multi_step_flowed to be a list"
+        for i, flow_tensor in enumerate(self.full_pc_gt_multi_step_flowed):
+            assert flow_tensor.dim() == 3, f"Rollout flow at index {i} should be 3D (T, PadN, 3), got {flow_tensor.shape}"
+            assert (
+                flow_tensor.shape[1] == self.full_pc.shape[1] and flow_tensor.shape[2] == 3
+            ), f"Each rollout flow should have shape (*, PadN, 3), got {flow_tensor.shape}"
 
     def __len__(self) -> int:
         return self.full_pc.shape[0]
@@ -435,8 +462,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
                     frame_flows_tensor = torch.stack(frame_flows)  # (valid_rollout_steps, PadN, 3)
                     full_pc_gt_multi_step_flowed.append(frame_flows_tensor)
 
-        device = full_pc.device
-        full_pc_gt_multi_step_flowed = [f.to(device).float() for f in full_pc_gt_multi_step_flowed]
+        full_pc_gt_multi_step_flowed = [f.float() for f in full_pc_gt_multi_step_flowed]
 
         full_pc_gt_class = torch.stack(
             [
@@ -520,7 +546,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
                 rgb_frame.pose.sensor_to_ego.inverse()
             )
             cam_frame_pc = pc_frame.full_pc.transform(pc_into_cam_frame_se3)
-            cam_frame_pc = PointCloud(cam_frame_pc.points[cam_frame_pc.points[:, 0] >= 0])
+            # cam_frame_pc = PointCloud(cam_frame_pc.points[cam_frame_pc.points[:, 0] >= 0])
 
             projected_points = rgb_frame.camera_projection.camera_frame_to_pixels(
                 cam_frame_pc.points
@@ -535,6 +561,8 @@ class TorchFullFrameInputSequence(BaseInputSequence):
                 & (projected_points[:, 0] < rgb_image.shape[1])
                 & (projected_points[:, 1] >= 0)
                 & (projected_points[:, 1] < rgb_image.shape[0])
+                # visibility filtering
+                & (cam_frame_pc.points[:, 0] >= 0)
             )
 
             # Ensure projected points is N x 2 (2D coordinates)
@@ -587,6 +615,50 @@ class TorchFullFrameInputSequence(BaseInputSequence):
         rgb_projected_points = torch.stack(rgb_projected_points)
         rgb_projected_points_mask = torch.stack(rgb_projected_points_mask)
 
+        def debug_projected_points(rgb_img_tensor, x, y, title=""):
+            rgb_img = rgb_img_tensor.cpu().numpy()
+
+            x = x.cpu()
+            y = y.cpu()
+
+            plt.figure(figsize=(8,6))
+            plt.imshow(rgb_img)
+            plt.scatter(x, y, s=1, c='r')
+            plt.title(title)
+            plt.axis('off')
+            plt.show()
+
+        def get_point_colors_from_projection(rgb_images, rgb_projected_points, rgb_projected_points_mask, full_pc):
+            K, NumIm, C, H, W = rgb_images.shape
+            PadN = rgb_projected_points.shape[2]
+            
+            if NumIm == 0 or H == 0 or W == 0:
+                return torch.zeros(0, 0, 3, dtype=torch.float32)
+
+            rgb_imgs = rgb_images[:, :, :3]  # (K, NumIm, 3, H, W)
+            rgb_imgs = rgb_imgs.permute(0,1,3,4,2).contiguous()  # (K, NumIm, H, W, 3)
+
+            pc_colors = torch.full((K, PadN, 3), float('nan'), dtype=rgb_imgs.dtype, device=rgb_imgs.device)
+            pc_valid_mask = ~torch.isnan(full_pc[..., 0])  # shape: (K, PadN)
+            pc_colors[pc_valid_mask] = 1.0  # dummy color for unpainted points
+
+            for k in range(K):
+                for img_index in range(NumIm):
+                    proj_xy = rgb_projected_points[k, img_index]  # (PadN, 2)
+                    valid = (rgb_projected_points_mask[k, img_index] == 1) & pc_valid_mask[k]
+
+                    x = proj_xy[:, 0].long().clamp(0, W - 1)
+                    y = proj_xy[:, 1].long().clamp(0, H - 1)
+
+                    # Let the later images overwrite the previous
+                    pc_colors[k, valid] = rgb_imgs[k, img_index, y[valid], x[valid]]
+
+            return pc_colors
+
+        pc_colors = get_point_colors_from_projection(
+            rgb_images, rgb_projected_points, rgb_projected_points_mask, full_pc
+        )
+
         return TorchFullFrameInputSequence(
             dataset_idx=idx,
             sequence_log_id=dataset_log_id,
@@ -606,6 +678,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
             rgb_poses_ego_to_global=rgb_poses_ego_to_global.float(),
             rgb_projected_points=rgb_projected_points.float(),
             rgb_projected_points_mask=rgb_projected_points_mask.float(),
+            pc_colors=pc_colors.float(),
             loader_type=loader_type,
         )
 
