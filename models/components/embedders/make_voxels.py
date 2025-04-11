@@ -30,65 +30,64 @@ class DynamicVoxelizer(nn.Module):
         super().__init__()
         self.voxel_size = voxel_size
         self.point_cloud_range = point_cloud_range
-        self.voxelizer = Voxelization(voxel_size,
-                                      point_cloud_range,
-                                      max_num_points=-1)
+        self.voxelizer = Voxelization(voxel_size, point_cloud_range, max_num_points=-1)
 
-    def _get_point_offsets(self, points: torch.Tensor,
-                           voxel_coords: torch.Tensor):
-
-        point_cloud_range = torch.tensor(self.point_cloud_range,
-                                         dtype=points.dtype,
-                                         device=points.device)
+    def _get_point_offsets(self, xyz_points: torch.Tensor, voxel_coords: torch.Tensor):
+        point_cloud_range = torch.tensor(self.point_cloud_range, dtype=xyz_points.dtype, device=xyz_points.device)
         min_point = point_cloud_range[:3]
-        voxel_size = torch.tensor(self.voxel_size,
-                                  dtype=points.dtype,
-                                  device=points.device)
+        voxel_size = torch.tensor(self.voxel_size, dtype=xyz_points.dtype, device=xyz_points.device)
 
-        # Voxel coords are in the form Z, Y, X :eyeroll:, convert to X, Y, Z
+        # voxel_coords are Z, Y, X -> convert to X, Y, Z
         voxel_coords = voxel_coords[:, [2, 1, 0]]
 
-        # Offsets are computed relative to min point
         voxel_centers = voxel_coords * voxel_size + min_point + voxel_size / 2
 
-        return points - voxel_centers
+        return xyz_points - voxel_centers
 
-    def forward(
-            self,
-            points: List[torch.Tensor], 
-            frame_key=None) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-
+    def forward(self, points: List[torch.Tensor], frame_key=None) -> List[Tuple[torch.Tensor, torch.Tensor]]:
         batch_results = []
-        for batch_idx in range(len(points)):
-            batch_points = points[batch_idx]
-            valid_point_idxes = torch.arange(batch_points.shape[0],
-                                             device=batch_points.device)
-            not_nan_mask = ~torch.isnan(batch_points).any(dim=1)
-            batch_non_nan_points = batch_points[not_nan_mask]
-            valid_point_idxes = valid_point_idxes[not_nan_mask]
-            if frame_key == 'pc0s':
-                # If this is the current frame, keep all points to match the evaluation vliad points mask
-                point_cloud_range = torch.tensor(self.point_cloud_range, dtype=batch_non_nan_points.dtype, device=batch_non_nan_points.device)
-                batch_non_nan_points = torch.clamp(batch_non_nan_points, min=point_cloud_range[:3]+1e-5, max=point_cloud_range[3:]-1e-5)
 
-            batch_voxel_coords = self.voxelizer(batch_non_nan_points)
-            # If any of the coords are -1, then the point is not in the voxel grid and should be discarded
+        for batch_idx in range(len(points)):
+            batch_points = points[batch_idx]                     # (N, input_dim)
+            xyz_points = batch_points[:, :3]                     # only xyz used for voxelization
+            extra_feats = batch_points[:, 3:] if batch_points.shape[1] > 3 else None
+
+            valid_point_idxes = torch.arange(batch_points.shape[0], device=batch_points.device)
+            not_nan_mask = ~torch.isnan(xyz_points).any(dim=1)   # ✅ only check xyz for nan
+            xyz_points = xyz_points[not_nan_mask]
+            valid_point_idxes = valid_point_idxes[not_nan_mask]
+
+            if extra_feats is not None:
+                extra_feats = extra_feats[not_nan_mask]
+
+            if frame_key == 'pc0s':
+                # Only clip xyz
+                point_cloud_range = torch.tensor(self.point_cloud_range, dtype=xyz_points.dtype, device=xyz_points.device)
+                xyz_points = torch.clamp(xyz_points, min=point_cloud_range[:3]+1e-5, max=point_cloud_range[3:]-1e-5)
+
+            batch_voxel_coords = self.voxelizer(xyz_points)
+
+            # Remove points that are outside of voxel range
             batch_voxel_coords_mask = (batch_voxel_coords != -1).all(dim=1)
-            valid_batch_voxel_coords = batch_voxel_coords[
-                batch_voxel_coords_mask]
-            valid_batch_non_nan_points = batch_non_nan_points[
-                batch_voxel_coords_mask]
+            valid_batch_voxel_coords = batch_voxel_coords[batch_voxel_coords_mask]
+            xyz_points = xyz_points[batch_voxel_coords_mask]
             valid_point_idxes = valid_point_idxes[batch_voxel_coords_mask]
 
-            point_offsets = self._get_point_offsets(valid_batch_non_nan_points,
-                                                    valid_batch_voxel_coords)
+            if extra_feats is not None:
+                extra_feats = extra_feats[batch_voxel_coords_mask]
+                valid_batch_points = torch.cat([xyz_points, extra_feats], dim=1)   # ✅ re-concatenate
+            else:
+                valid_batch_points = xyz_points
+
+            point_offsets = self._get_point_offsets(xyz_points, valid_batch_voxel_coords)
 
             result_dict = {
-                "points": valid_batch_non_nan_points,
+                "points": valid_batch_points,      # ✅ keep the full points (xyz + extra_feats)
                 "voxel_coords": valid_batch_voxel_coords,
                 "point_idxes": valid_point_idxes,
-                "point_offsets": point_offsets
+                "point_offsets": point_offsets,
             }
 
             batch_results.append(result_dict)
+
         return batch_results

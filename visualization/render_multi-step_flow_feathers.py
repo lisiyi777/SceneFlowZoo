@@ -114,26 +114,36 @@ def render_multi_step_flows(
             multi_step_flows = []
             current_points = torch_query_points.clone()
 
+            ego_to_global = full_sequence.get_pc_poses_ego_to_global(idx)
+            global_to_ego = torch.inverse(ego_to_global[:3, :3])
+
             for step in range(min(rollout_steps, len(base_dataset_full_sequence) - idx - 1)):
                 query_result: ModelFlowResult = model.model(
                     current_points, idx + step, len(full_sequence), QueryDirection.FORWARD,
                 )
-
-                ego_to_global = full_sequence.get_pc_poses_ego_to_global(idx + step)
-                global_to_ego = torch.inverse(ego_to_global[:3, :3])
-                flow_ego = (global_to_ego @ query_result.flow.T).T
-
-                multi_step_flows.append(flow_ego.detach().cpu().numpy())
+                
                 current_points = current_points + query_result.flow
-                current_points_np = current_points.detach().cpu().numpy()
 
-                if idx + step < len(base_dataset_full_sequence):
-                    target_pc_np = base_dataset_full_sequence[idx + step + 1].pc.global_pc.points
-                    if step == 0:
-                        match_ratio, dists = knn_match_ratio(torch_query_points.detach().cpu().numpy(), target_pc_np)
-                        print(f"idx={idx} | baseline match ratio = {match_ratio:.3f}")
-                    match_ratio, dists = knn_match_ratio(current_points_np, target_pc_np)
-                    print(f"idx={idx} | step={step} | match ratio = {match_ratio:.3f}")
+                accumulated_global_flows = current_points - torch_query_points
+                flow_ego = (global_to_ego @ accumulated_global_flows.T).T
+                multi_step_flows.append(flow_ego.detach().cpu().numpy())
+
+                # current_points_np = current_points.detach().cpu().numpy()
+                # if step == 0:
+                #     glb_pc = full_sequence.get_global_pc_gt_flowed(idx)
+                # else:
+                #     ego_pc = full_sequence.get_ego_pc_gt_multi_step_flowed(idx, step-1)
+                #     glb_pc = (ego_to_global[:3, :3] @ ego_pc.T).T + ego_to_global[:3, 3]  # Transform to global
+
+                # torch_current_points_np = glb_pc.detach().cpu().numpy()
+
+                # if idx + step < len(base_dataset_full_sequence):
+                #     target_pc_np = base_dataset_full_sequence[idx + step + 1].pc.global_pc.points
+                #     # if step == 0:
+                #     #     match_ratio, dists = knn_match_ratio(torch_query_points.detach().cpu().numpy(), target_pc_np)
+                #     #     print(f"idx={idx} | baseline match ratio = {match_ratio:.3f}")
+                #     match_ratio, dists = knn_match_ratio(torch_current_points_np, current_points_np)
+                #     print(f"idx={idx} | step={step} | match ratio = {match_ratio:.3f}")
 
             # Convert to numpy arrays
             mask_np = torch_full_mask.detach().cpu().numpy()

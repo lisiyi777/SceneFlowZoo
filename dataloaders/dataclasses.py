@@ -189,13 +189,24 @@ class TorchFullFrameInputSequence(BaseInputSequence):
         ref_device = self.full_pc.device
         return from_fixed_array_torch(self.full_pc_gt_multi_step_flowed[idx][step]).to(ref_device)
     
-    def get_pc_rgb(self, idx: int) -> torch.Tensor:
+    def get_ego_pc_gt_multi_step_flowed(self, idx: int, step: int) -> torch.Tensor:
+        """
+        Get the point cloud multi step flow at the specified index.
+        """
+        full_pc_flowed = self.get_full_ego_pc_gt_multi_step_flowed(idx, step)
+        full_mask = self.get_full_pc_mask(idx)
+        return full_pc_flowed[full_mask]
+
+    def get_full_pc_rgb(self, idx: int) -> torch.Tensor:
         """
         Get the RGB features of pointclouds at the specified index.
         """
-        pc_colors_filtered = from_fixed_array_torch(self.pc_colors[idx])
+        return from_fixed_array_torch(self.pc_colors[idx])
+
+    def get_pc_rgb(self, idx: int) -> torch.Tensor:
+        full_rgb = self.get_full_pc_rgb(idx)
         full_mask = self.get_full_pc_mask(idx)
-        return pc_colors_filtered[full_mask]
+        return full_rgb[full_mask]
 
     def get_ego_pc(self, idx: int) -> torch.Tensor:
         full_pc = self.get_full_ego_pc(idx)
@@ -616,6 +627,7 @@ class TorchFullFrameInputSequence(BaseInputSequence):
         rgb_projected_points_mask = torch.stack(rgb_projected_points_mask)
 
         def debug_projected_points(rgb_img_tensor, x, y, title=""):
+            # save the projection as a depth image, which can be read by the zsdc.
             rgb_img = rgb_img_tensor.cpu().numpy()
 
             x = x.cpu()
@@ -655,9 +667,21 @@ class TorchFullFrameInputSequence(BaseInputSequence):
 
             return pc_colors
 
-        pc_colors = get_point_colors_from_projection(
-            rgb_images, rgb_projected_points, rgb_projected_points_mask, full_pc
-        )
+        if frame_list[0].per_pixel_features is not None:
+            PadN = full_pc.shape[1]
+            padded_pc_colors = []
+            for frame in frame_list:
+                frame_colors = torch.from_numpy(frame.per_pixel_features.feature)
+                num_points = frame_colors.shape[0]
+                padded = torch.full((PadN, frame_colors.shape[1]), float('nan'), dtype=frame_colors.dtype)
+                padded[:num_points] = frame_colors
+                padded_pc_colors.append(padded)
+            pc_colors = torch.stack(padded_pc_colors, dim=0)
+        else:
+            pc_colors = get_point_colors_from_projection(
+                rgb_images, rgb_projected_points, rgb_projected_points_mask, full_pc
+            )
+
 
         return TorchFullFrameInputSequence(
             dataset_idx=idx,

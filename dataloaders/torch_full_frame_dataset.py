@@ -35,7 +35,6 @@ class TorchFullFrameDataset(SplitFullFrameDataset):
         self, batch: list[TorchFullFrameInputSequence]
     ) -> list[TorchFullFrameInputSequence]:
         return batch
-
     def __getitem__(self, split_idx) -> TorchFullFrameInputSequence:
         global_idx = self._get_global_idx(split_idx)
         frame_list = self.dataset[global_idx]
@@ -46,3 +45,4 @@ class TorchFullFrameDataset(SplitFullFrameDataset):
             loader_type=self.dataset.loader_type(),
             allow_pc_slicing=self.allow_pc_slicing,
         )
+

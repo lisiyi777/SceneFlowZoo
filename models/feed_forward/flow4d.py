@@ -84,22 +84,23 @@ class DeFlowLoss(DeFlowBaseLoss):
         return {"loss": loss}
 
 class DeFlowRolloutLoss(DeFlowBaseLoss):
-    def __init__(self):
+    def __init__(self, rollout_gamma=0.5):
         super().__init__()
+        self.rollout_gamma = rollout_gamma
 
-    def _deflow_loss(
-        self,
-        input_batch: List[TorchFullFrameInputSequence],
-        model_res: List[TorchFullFrameOutputSequence],
-    ):
+    def _deflow_loss(self, input_batch: List[TorchFullFrameInputSequence], model_res: List[TorchFullFrameOutputSequence]):
         total_loss = 0.0
-
+        device = input_batch[0].get_full_ego_pc(0).device
         for input_item, output_item in zip(input_batch, model_res):
             sequence_len = len(input_item)
             rollout_steps = len(output_item)
             source_idx = sequence_len - rollout_steps - 1
 
             assert source_idx >= 0, f"Invalid source_idx={source_idx}"
+
+            # Step weights
+            weights = torch.tensor([self.rollout_gamma ** t for t in range(rollout_steps)], device=device)
+            weights = weights / weights.sum()
 
             for t in range(rollout_steps):
                 pred = output_item.get_full_ego_flow(t)
@@ -126,7 +127,7 @@ class DeFlowRolloutLoss(DeFlowBaseLoss):
                 if not torch.isnan(speed_mid):
                     weight_loss += speed_mid
 
-                total_loss += weight_loss
+                total_loss += weights[t] * weight_loss  # <-- weighted by step
 
         return total_loss
 
@@ -138,6 +139,11 @@ class DeFlowRolloutLoss(DeFlowBaseLoss):
         loss = self._deflow_loss(input_batch, model_results)
         return {"loss": loss}
 
+class Flow4DInputFeatureType(enum.Enum):
+    XYZ = "xyz"
+    XYZ_PAINTED = "xyz_painted"
+
+
 class Flow4D(BaseTorchModel):
     def __init__(
         self,
@@ -148,27 +154,38 @@ class Flow4D(BaseTorchModel):
         SEQUENCE_LENGTH=5,
         rollout_steps=3,
         loss_fn: DeFlowBaseLoss = DeFlowRolloutLoss(),
-        # loss_fn: FastFlow3DBaseLoss = FastFlow3DBucketedLoaderLoss(),
+        input_feature_type: Flow4DInputFeatureType = Flow4DInputFeatureType.XYZ,
     ) -> None:
         super().__init__()
 
-        point_output_ch = 8
-        voxel_output_ch = 8
+        self.input_feature_type = input_feature_type
         self.SEQUENCE_LENGTH = SEQUENCE_LENGTH
-        self.rollout_steps=rollout_steps
-        self.embedder_4D = DynamicEmbedder_4D(voxel_size=VOXEL_SIZE,
-                                        pseudo_image_dims=[PSEUDO_IMAGE_DIMS[0], PSEUDO_IMAGE_DIMS[1], FEATURE_CHANNELS, SEQUENCE_LENGTH], 
-                                        point_cloud_range=POINT_CLOUD_RANGE,
-                                        feat_channels=point_output_ch)
-        
+        self.rollout_steps = rollout_steps
+
+        # Decide input dim
+        point_input_dim = 3 if input_feature_type == Flow4DInputFeatureType.XYZ else 6
+        point_output_ch = 16
+        voxel_output_ch = 16
+
+        # Embedder
+        self.embedder_4D = DynamicEmbedder_4D(
+            voxel_size=VOXEL_SIZE,
+            pseudo_image_dims=[PSEUDO_IMAGE_DIMS[0], PSEUDO_IMAGE_DIMS[1], FEATURE_CHANNELS, SEQUENCE_LENGTH],
+            point_cloud_range=POINT_CLOUD_RANGE,
+            feat_channels=point_output_ch,
+            input_dim=point_input_dim,  
+        )
+
+        # 4D Network
         self.network_4D = Network_4D(in_channel=point_output_ch, out_channel=voxel_output_ch)
 
+        # Temporal fusion
         self.seperate_feat = Seperate_to_3D(SEQUENCE_LENGTH)
 
+        # Point head
         self.pointhead_3D = Point_head(voxel_feat_dim=voxel_output_ch, point_feat_dim=point_output_ch)
 
         self.loss_fn_obj = loss_fn
-
         self.timer = dztimer.Timing()
         self.timer.start("Total")
 
@@ -178,60 +195,80 @@ class Flow4D(BaseTorchModel):
         print("\nLoading... model weight from: ", ckpt_path, "\n")
         return self.load_state_dict(state_dict=state_dict, strict=False)
 
-    def forward(
-        self,
-        forward_mode: ForwardMode,
-        batched_sequence: List[TorchFullFrameInputSequence],
-        logger: Logger,
-    ) -> List[TorchFullFrameOutputSequence]:
-        
+    def forward(self, forward_mode: ForwardMode, batched_sequence: List[TorchFullFrameInputSequence], logger: Logger) -> List[TorchFullFrameOutputSequence]:
         pred_results = []
         full_len = len(batched_sequence[0])
         batch_size = len(batched_sequence)
-        
-        if forward_mode == ForwardMode.VAL:
-            assert full_len == self.SEQUENCE_LENGTH, f"Expected full_len to be {self.SEQUENCE_LENGTH}, but got {full_len}"
 
-            window = [
-                [seq.get_global_pc(i) for seq in batched_sequence]
-                for i in range(self.SEQUENCE_LENGTH)
-            ]
-            
+        if forward_mode == ForwardMode.VAL:
+            assert full_len == self.SEQUENCE_LENGTH
+            window = [ [self._get_input(seq, i) for seq in batched_sequence] for i in range(self.SEQUENCE_LENGTH)]
             model_res = self._model_forward(window)
             pred_results.append(model_res)
 
         elif forward_mode == ForwardMode.TRAIN:
             rollout_steps = self.rollout_steps
-            assert full_len == self.SEQUENCE_LENGTH + rollout_steps - 1, \
-                f"Expected full_len to be {self.SEQUENCE_LENGTH + rollout_steps - 1}, but got {full_len}"
+            
+            if rollout_steps==3:
+                assert full_len == self.SEQUENCE_LENGTH + rollout_steps - 1
 
-            # Prepare initial window
-            window = [
-                [seq.get_global_pc(i) for seq in batched_sequence]
-                for i in range(self.SEQUENCE_LENGTH)
-            ]
+                window = [ [self._get_input(seq, i) for seq in batched_sequence] for i in range(self.SEQUENCE_LENGTH)]
 
-            for rollout_step in range(rollout_steps):
+                for rollout_step in range(rollout_steps):
+                    model_res = self._model_forward(window)
+                    flows = model_res["flow"]
+                    last_pc_batch = window[-2]
+
+                    warped_pc = [last_pc_batch[i][:, :3] + flows[i] for i in range(batch_size)]  # use xyz only for warping
+                    if self.input_feature_type == Flow4DInputFeatureType.XYZ_PAINTED:
+                        warped_pc = [torch.cat([warped_pc[i], last_pc_batch[i][:, 3:]], dim=-1) for i in range(batch_size)]  # add colors back
+                    
+                    pred_results.append(model_res)
+
+                    if self.SEQUENCE_LENGTH + rollout_step < full_len:
+                        next_index = self.SEQUENCE_LENGTH + rollout_step
+                        next_frame = [self._get_input(seq, next_index) for seq in batched_sequence]
+                    else:
+                        break
+
+                    window = window[1:-1] + [warped_pc, next_frame]
+
+            elif rollout_steps==2:
+                rollout_steps = self.rollout_steps
+                assert full_len == self.SEQUENCE_LENGTH + rollout_steps - 1
+
+                window = [ [self._get_input(seq, i) for seq in batched_sequence] for i in range(self.SEQUENCE_LENGTH)]
                 model_res = self._model_forward(window)
                 flows = model_res["flow"]
-                last_pc_batch = window[-2]
 
-                warped_pc = [last_pc_batch[i] + flows[i] for i in range(batch_size)]
+                for rollout_step in range(rollout_steps):
+                    last_pc_batch = window[-2]
 
-                pred_results.append(model_res)
+                    warped_pc = [last_pc_batch[i][:, :3] + flows[i] for i in range(batch_size)]  # use xyz only for warping
+                    if self.input_feature_type == Flow4DInputFeatureType.XYZ_PAINTED:
+                        warped_pc = [torch.cat([warped_pc[i], last_pc_batch[i][:, 3:]], dim=-1) for i in range(batch_size)]  # add colors back
+                    
+                    pred_results.append(model_res)
 
-                # Prepare next window
-                if self.SEQUENCE_LENGTH + rollout_step < full_len:
-                    next_index = self.SEQUENCE_LENGTH + rollout_step
-                    next_frame = [seq.get_global_pc(next_index) for seq in batched_sequence]
-                else:
-                    break
+                    if self.SEQUENCE_LENGTH + rollout_step < full_len:
+                        next_index = self.SEQUENCE_LENGTH + rollout_step
+                        next_frame = [self._get_input(seq, next_index) for seq in batched_sequence]
+                    else:
+                        break
 
-                # Sliding the window forward
-                window = window[1:-1] + [warped_pc, next_frame]
+                    window = window[1:-1] + [warped_pc, next_frame]
 
         return self._convert_output_dict(pred_results, batched_sequence)
-    
+
+    def _get_input(self, seq: TorchFullFrameInputSequence, i: int):
+        """Fetch input feature according to self.input_feature_type"""
+        pc_xyz = seq.get_global_pc(i)
+        if self.input_feature_type == Flow4DInputFeatureType.XYZ:
+            return pc_xyz
+        else:
+            pc_color = seq.get_pc_rgb(i)
+            return torch.cat([pc_xyz, pc_color], dim=-1)
+
 
     def _convert_output_dict(
         self,
@@ -284,11 +321,6 @@ class Flow4D(BaseTorchModel):
             )
 
         return outputs
-
-    def _convert_to_full_flow(self, valid_flows: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
-        full_flows = torch.zeros((valid_mask.shape[0], 3), device=valid_flows.device)
-        full_flows[valid_mask] = valid_flows
-        return full_flows
 
     def _model_forward(self, pcs: List[List[torch.Tensor]]) -> dict:
         """

@@ -75,23 +75,31 @@ class DynamicEmbedder(nn.Module):
         # Concatenate the pseudoimages along the batch dimension
         return torch.cat(pseudoimage_lst, dim=0), voxel_info_list
 
-
 class DynamicEmbedder_4D(nn.Module):
 
     def __init__(self, voxel_size, pseudo_image_dims, point_cloud_range,
-                 feat_channels: int) -> None:
+                 feat_channels: int, input_dim: int = 3) -> None: 
         super().__init__()
-        self.voxelizer = DynamicVoxelizer(voxel_size=voxel_size,
-                                          point_cloud_range=point_cloud_range)
+        self.input_dim = input_dim  
+
+        self.voxelizer = DynamicVoxelizer(
+            voxel_size=voxel_size,
+            point_cloud_range=point_cloud_range
+        )
+
         self.feature_net = DynamicPillarFeatureNet_flow4D(
-            in_channels=3,
-            feat_channels=(feat_channels, ),
+            in_channels=self.input_dim, 
+            feat_channels=(feat_channels,),
             point_cloud_range=point_cloud_range,
             voxel_size=voxel_size,
-            mode='avg')
-        self.scatter = PointPillarsScatter(in_channels=feat_channels,
-                                           output_shape=pseudo_image_dims)
-        
+            mode='avg'
+        )
+
+        self.scatter = PointPillarsScatter(
+            in_channels=feat_channels,
+            output_shape=pseudo_image_dims
+        )
+
         self.voxel_spatial_shape = pseudo_image_dims
 
     def forward(self, input_dict) -> torch.Tensor:
@@ -105,19 +113,26 @@ class DynamicEmbedder_4D(nn.Module):
         pc0_point_feats_lst = []
 
         for time_index, frame_key in enumerate(frame_keys):
-            pc = input_dict[frame_key]
+            pc = input_dict[frame_key]   # shape (N, input_dim)
             voxel_info_list = self.voxelizer(pc, frame_key)
 
             voxel_feats_list_batch = []
             voxel_coors_list_batch = []
 
             for batch_index, voxel_info_dict in enumerate(voxel_info_list):
-                points = voxel_info_dict['points']
+                points = voxel_info_dict['points']  # now points[..., :input_dim]
                 coordinates = voxel_info_dict['voxel_coords']
                 voxel_feats, voxel_coors, point_feats = self.feature_net(points, coordinates)
+
                 if frame_key == 'pc0s':
                     pc0_point_feats_lst.append(point_feats)
-                batch_indices = torch.full((voxel_coors.size(0), 1), batch_index, dtype=torch.long, device=voxel_coors.device)
+
+                batch_indices = torch.full(
+                    (voxel_coors.size(0), 1),
+                    batch_index,
+                    dtype=torch.long,
+                    device=voxel_coors.device
+                )
                 voxel_coors_batch = torch.cat([batch_indices, voxel_coors[:, [2, 1, 0]]], dim=1)
 
                 voxel_feats_list_batch.append(voxel_feats)
@@ -126,7 +141,12 @@ class DynamicEmbedder_4D(nn.Module):
             voxel_feats_sp = torch.cat(voxel_feats_list_batch, dim=0)
             coors_batch_sp = torch.cat(voxel_coors_list_batch, dim=0).to(dtype=torch.int32)
 
-            time_dimension = torch.full((coors_batch_sp.shape[0], 1), time_index, dtype=torch.int32, device='cuda')
+            time_dimension = torch.full(
+                (coors_batch_sp.shape[0], 1),
+                time_index,
+                dtype=torch.int32,
+                device=voxel_feats_sp.device
+            )
             coors_batch_sp_4d = torch.cat((coors_batch_sp, time_dimension), dim=1)
 
             voxel_feats_list.append(voxel_feats_sp)
@@ -139,7 +159,12 @@ class DynamicEmbedder_4D(nn.Module):
         all_voxel_feats_sp = torch.cat(voxel_feats_list, dim=0)
         all_coors_batch_sp_4d = torch.cat(voxel_coors_list, dim=0)
 
-        sparse_tensor_4d = spconv.SparseConvTensor(all_voxel_feats_sp.contiguous(), all_coors_batch_sp_4d.contiguous(), self.voxel_spatial_shape, int(batch_index + 1))
+        sparse_tensor_4d = spconv.SparseConvTensor(
+            all_voxel_feats_sp.contiguous(),
+            all_coors_batch_sp_4d.contiguous(),
+            self.voxel_spatial_shape,
+            int(batch_index + 1)
+        )
 
         output = {
             '4d_tensor': sparse_tensor_4d,

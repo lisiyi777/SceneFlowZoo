@@ -1,16 +1,17 @@
 _base_ = "./bucketed_supervised.py"
 
-train_sequence_dir = "/efs/argoverse2_mini_debug/val/"
-train_flow_data_dir = "/efs/argoverse2_mini_debug/val_rollout_feather"
+train_sequence_dir = "/efs/argoverse2/argoverse2_mini_debug/val/"
+train_flow_data_dir = "/efs/argoverse2/argoverse2_mini_debug/val_rollout_feather"
 
-test_dataset_root = "/efs/argoverse2_mini_debug/val/"
+test_dataset_root = "/efs/argoverse2/argoverse2_mini_debug/val/"
 
-save_output_folder = "bigdata/argoverse2_mini_debug/val_flow4d_rollouts/"
+save_output_folder = "/bigdata/argoverse2_mini_debug/val_flow4d_rollouts/"
 
-epochs = 15
+epochs = 40
 learning_rate = 1e-4
+
 seq_length=5
-rollout_steps=1
+rollout_steps=3
 
 model = dict(
     args=dict(
@@ -19,15 +20,15 @@ model = dict(
     ),
 )
 
-
-
 train_dataset = dict( 
     args=dict(
         root_dir=train_sequence_dir, 
         flow_data_path=train_flow_data_dir, 
         use_gt_flow=False, 
         rollout_steps=rollout_steps,
+        # with_rgb=True,
         subsequence_length=seq_length+rollout_steps-1,
+        use_cache=True,
         ),
     )
 test_dataset = dict(
@@ -35,6 +36,8 @@ test_dataset = dict(
         root_dir=test_dataset_root,
         subsequence_length=seq_length,
         eval_args=dict(output_path="eval_results/bucketed_epe_mini_debug/supervised_rollouts/"),
+        use_cache=True,
+        # with_rgb=True,
     )
 )
 
